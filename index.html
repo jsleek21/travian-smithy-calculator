@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Travian: Legends — Troops vs Smithy Calculator</title>
+<style>
+  :root {
+    --bg: #1c1a16;
+    --panel: #262319;
+    --panel-2: #2f2b1e;
+    --border: #4a4432;
+    --text: #f0ead8;
+    --text-dim: #b9b199;
+    --accent: #c9a24b;
+    --good: #6fbf73;
+    --bad: #d9705c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--text-dim); margin-bottom: 24px; font-size: 14px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  label { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; margin-top: 12px; }
+  label:first-child { margin-top: 0; }
+  select, input[type=number] {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+  .result-box {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .result-box h3 { margin: 0 0 8px; font-size: 14px; color: var(--text-dim); font-weight: 600; }
+  .result-box .value { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .result-box .detail { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .winner { border-color: var(--good); box-shadow: 0 0 0 1px var(--good) inset; }
+  .winner .value { color: var(--good); }
+  .verdict {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: rgba(111,191,115,0.1);
+    border: 1px solid var(--good);
+    font-size: 14px;
+  }
+  .stat-select { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .stat-select button {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .stat-select button.active {
+    background: var(--accent);
+    color: #1c1a16;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .note { font-size: 12px; color: var(--text-dim); margin-top: 10px; }
+  footer { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 30px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Troops or Smithy Upgrade?</h1>
+<p class="sub">Compare the resource cost of training more troops vs. upgrading your Smithy one level, per stat point gained. Data pulled from Travian's official help center and cross-verified against live in-game Smithy screens.</p>
+
+<div class="card">
+  <div class="row3">
+    <div>
+      <label>Tribe</label>
+      <select id="tribe"></select>
+    </div>
+    <div>
+      <label>Unit</label>
+      <select id="unit"></select>
+    </div>
+    <div>
+      <label>Stat to optimize for</label>
+      <select id="stat"></select>
+    </div>
+  </div>
+  <div class="row" style="margin-top: 14px;">
+    <div>
+      <label>Current Smithy level for this unit (0–19)</label>
+      <input type="number" id="currentLevel" min="0" max="19" value="0">
+    </div>
+    <div>
+      <label>How many of this unit do you currently have?</label>
+      <input type="number" id="troopCount" min="0" value="100">
+    </div>
+  </div>
+</div>
+
+<div class="card" id="resultsCard" style="display:none;">
+  <div class="result-grid">
+    <div class="result-box" id="boxTroops">
+      <h3>Train 1 more troop</h3>
+      <div class="value" id="valTroops">-</div>
+      <div class="detail" id="detailTroops"></div>
+    </div>
+    <div class="result-box" id="boxUpgrade">
+      <h3>Upgrade to level <span id="nextLevelLabel"></span></h3>
+      <div class="value" id="valUpgrade">-</div>
+      <div class="detail" id="detailUpgrade"></div>
+    </div>
+  </div>
+  <div class="verdict" id="verdict"></div>
+  <div class="note" id="warnNote"></div>
+</div>
+
+<footer>
+  Built from <a href="https://support.travian.com/en/articles/186-more-troops-or-smithy-upgrades" target="_blank">Travian's official guide</a> +
+  live in-game Smithy data. Not affiliated with Travian Games.
+</footer>
+
+<script src="data.js"></script>
+<script>
+const tribeSel = document.getElementById('tribe');
+const unitSel = document.getElementById('unit');
+const statSel = document.getElementById('stat');
+const currentLevelInput = document.getElementById('currentLevel');
+const troopCountInput = document.getElementById('troopCount');
+
+const STAT_LABELS = {
+  attack: 'Attack',
+  defense: 'Defence',
+  scoutAttack: 'Scout Attack',
+  scoutResist: 'Scout Resist'
+};
+
+function populateTribes() {
+  Object.keys(TRAVIAN_DATA).forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = t;
+    tribeSel.appendChild(opt);
+  });
+}
+
+function populateUnits() {
+  unitSel.innerHTML = '';
+  const units = TRAVIAN_DATA[tribeSel.value];
+  Object.keys(units).forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u; opt.textContent = u;
+    unitSel.appendChild(opt);
+  });
+  populateStats();
+}
+
+function populateStats() {
+  statSel.innerHTML = '';
+  const unit = TRAVIAN_DATA[tribeSel.value][unitSel.value];
+  Object.keys(unit.stats).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = STAT_LABELS[s] || s;
+    statSel.appendChild(opt);
+  });
+  calculate();
+}
+
+function fmt(n) {
+  return Math.round(n).toLocaleString();
+}
+
+function fmtCost(n) {
+  if (!isFinite(n)) return '∞';
+  if (n < 10) return n.toFixed(2);
+  if (n < 100) return n.toFixed(1);
+  return Math.round(n).toLocaleString();
+}
+
+function calculate() {
+  const unit = TRAVIAN_DATA[tribeSel.value][unitSel.value];
+  const statKey = statSel.value;
+  if (!statKey) return;
+
+  const curLvl = Math.max(0, Math.min(19, parseInt(currentLevelInput.value) || 0));
+  const troopCount = Math.max(0, parseInt(troopCountInput.value) || 0);
+  const nextLvl = curLvl + 1;
+
+  const statArr = unit.stats[statKey]; // index 0 = level 1
+  const statAtCurrent = curLvl === 0 ? Math.round(statArr[0] / (1 + (statArr[1]-statArr[0])/statArr[0])) : statArr[curLvl - 1];
+  // level 0 base stat isn't in our table (table starts at level 1). Approximate level-0 as level-1 minus the level1->2 delta, floor at something sane.
+  const trueStatAtCurrent = curLvl === 0 ? Math.max(1, Math.round(statArr[0] - (statArr[1] - statArr[0]))) : statArr[curLvl - 1];
+  const statAtNext = statArr[nextLvl - 1];
+
+  const gainPerUpgrade = statAtNext - trueStatAtCurrent;
+
+  // Cost of training 1 more troop (fixed, level-independent)
+  const trainCost = unit.cost.train;
+  const trainTotal = trainCost[0] + trainCost[1] + trainCost[2] + trainCost[3];
+  const costPerStat_train = trainTotal / trueStatAtCurrent;
+
+  // Cost of upgrading current -> next level
+  const upgradeCost = unit.cost.upgrade[nextLvl];
+  let upgradeTotal = null, costPerStat_upgrade = null, totalGain = null;
+  if (upgradeCost) {
+    upgradeTotal = upgradeCost[0] + upgradeCost[1] + upgradeCost[2] + upgradeCost[3];
+    totalGain = gainPerUpgrade * troopCount;
+    costPerStat_upgrade = totalGain > 0 ? upgradeTotal / totalGain : Infinity;
+  }
+
+  document.getElementById('resultsCard').style.display = 'block';
+  document.getElementById('nextLevelLabel').textContent = nextLvl;
+
+  document.getElementById('valTroops').textContent = `${fmtCost(costPerStat_train)} res / ${STAT_LABELS[statKey].toLowerCase()} pt`;
+  document.getElementById('detailTroops').innerHTML =
+    `Training cost: ${fmt(trainTotal)} (${trainCost.map(fmt).join(' / ')})<br>` +
+    `Stat gained: +${fmt(trueStatAtCurrent)} ${STAT_LABELS[statKey].toLowerCase()} (1 new troop at level ${curLvl})`;
+
+  if (upgradeCost) {
+    document.getElementById('valUpgrade').textContent = `${fmtCost(costPerStat_upgrade)} res / ${STAT_LABELS[statKey].toLowerCase()} pt`;
+    document.getElementById('detailUpgrade').innerHTML =
+      `Upgrade cost: ${fmt(upgradeTotal)} (${upgradeCost.map(fmt).join(' / ')})<br>` +
+      `Stat gained: +${fmt(gainPerUpgrade)} per troop × ${troopCount} troops = +${fmt(totalGain)} total`;
+  } else {
+    document.getElementById('valUpgrade').textContent = 'Max level';
+    document.getElementById('detailUpgrade').textContent = 'This unit is already at level 20 for this stat.';
+  }
+
+  const boxTroops = document.getElementById('boxTroops');
+  const boxUpgrade = document.getElementById('boxUpgrade');
+  boxTroops.classList.remove('winner');
+  boxUpgrade.classList.remove('winner');
+
+  const verdict = document.getElementById('verdict');
+  if (!upgradeCost) {
+    boxTroops.classList.add('winner');
+    verdict.textContent = `Smithy is maxed for this stat — train more troops.`;
+  } else if (costPerStat_train < costPerStat_upgrade) {
+    boxTroops.classList.add('winner');
+    const pct = Math.round((costPerStat_upgrade / costPerStat_train - 1) * 100);
+    verdict.textContent = `Training more troops is ~${pct}% more resource-efficient than upgrading right now, at your current stack of ${troopCount}.`;
+  } else {
+    boxUpgrade.classList.add('winner');
+    const pct = Math.round((costPerStat_train / costPerStat_upgrade - 1) * 100);
+    verdict.textContent = `Upgrading to level ${nextLvl} is ~${pct}% more resource-efficient than training more troops, because the boost applies to all ${troopCount} troops you already own.`;
+  }
+
+  const warnNote = document.getElementById('warnNote');
+  if (troopCount === 0) {
+    warnNote.textContent = `Note: with 0 troops, upgrading has no payoff yet — the boost only applies to troops you own.`;
+  } else {
+    warnNote.textContent = `Note: this compares raw resource cost per stat point. It does not include build time, Smithy building-level requirements, or crop upkeep — factor those in for edge cases.`;
+  }
+}
+
+populateTribes();
+populateUnits();
+tribeSel.addEventListener('change', populateUnits);
+unitSel.addEventListener('change', populateStats);
+statSel.addEventListener('change', calculate);
+currentLevelInput.addEventListener('input', calculate);
+troopCountInput.addEventListener('input', calculate);
+</script>
+
+</body>
+</html>
