@@ -108,10 +108,14 @@
       <select id="stat"></select>
     </div>
   </div>
-  <div class="row" style="margin-top: 14px;">
+  <div class="row3" style="margin-top: 14px;">
     <div>
       <label>Current Smithy level for this unit (0–19)</label>
       <input type="number" id="currentLevel" min="0" max="19" value="0">
+    </div>
+    <div>
+      <label>Target Smithy level to jump to (1–20)</label>
+      <input type="number" id="targetLevel" min="1" max="20" value="1">
     </div>
     <div>
       <label>How many of this unit do you currently have?</label>
@@ -128,12 +132,17 @@
       <div class="detail" id="detailTroops"></div>
     </div>
     <div class="result-box" id="boxUpgrade">
-      <h3>Upgrade to level <span id="nextLevelLabel"></span></h3>
+      <h3>Jump to level <span id="nextLevelLabel"></span></h3>
       <div class="value" id="valUpgrade">-</div>
       <div class="detail" id="detailUpgrade"></div>
     </div>
   </div>
   <div class="verdict" id="verdict"></div>
+  <div class="result-box" id="breakevenBox" style="margin-top:14px;">
+    <h3>Breakeven troop count for this jump</h3>
+    <div class="value" id="valBreakeven">-</div>
+    <div class="detail" id="detailBreakeven"></div>
+  </div>
   <div class="note" id="warnNote"></div>
 </div>
 
@@ -148,6 +157,7 @@ const tribeSel = document.getElementById('tribe');
 const unitSel = document.getElementById('unit');
 const statSel = document.getElementById('stat');
 const currentLevelInput = document.getElementById('currentLevel');
+const targetLevelInput = document.getElementById('targetLevel');
 const troopCountInput = document.getElementById('troopCount');
 
 const STAT_LABELS = {
@@ -198,53 +208,69 @@ function fmtCost(n) {
   return Math.round(n).toLocaleString();
 }
 
+function statAtLevel(statArr, lvl) {
+  // statArr index 0 = level 1. Level 0 (unupgraded) is extrapolated backward from the 1->2 delta.
+  if (lvl <= 0) return Math.max(1, Math.round(statArr[0] - (statArr[1] - statArr[0])));
+  if (lvl > 20) lvl = 20;
+  return statArr[lvl - 1];
+}
+
+// Cumulative resource cost to go from level `from` to level `to` (from < to), summed across levels from+1..to
+function cumulativeUpgradeCost(unit, from, to) {
+  let total = [0,0,0,0];
+  let missingLevel = null;
+  for (let lvl = from + 1; lvl <= to; lvl++) {
+    const c = unit.cost.upgrade[lvl];
+    if (!c) { missingLevel = lvl; break; }
+    for (let i = 0; i < 4; i++) total[i] += c[i];
+  }
+  return { total, missingLevel };
+}
+
 function calculate() {
   const unit = TRAVIAN_DATA[tribeSel.value][unitSel.value];
   const statKey = statSel.value;
   if (!statKey) return;
 
   const curLvl = Math.max(0, Math.min(19, parseInt(currentLevelInput.value) || 0));
+  let tgtLvl = Math.max(1, Math.min(20, parseInt(targetLevelInput.value) || 1));
+  if (tgtLvl <= curLvl) { tgtLvl = curLvl + 1; targetLevelInput.value = tgtLvl; }
   const troopCount = Math.max(0, parseInt(troopCountInput.value) || 0);
-  const nextLvl = curLvl + 1;
 
-  const statArr = unit.stats[statKey]; // index 0 = level 1
-  const statAtCurrent = curLvl === 0 ? Math.round(statArr[0] / (1 + (statArr[1]-statArr[0])/statArr[0])) : statArr[curLvl - 1];
-  // level 0 base stat isn't in our table (table starts at level 1). Approximate level-0 as level-1 minus the level1->2 delta, floor at something sane.
-  const trueStatAtCurrent = curLvl === 0 ? Math.max(1, Math.round(statArr[0] - (statArr[1] - statArr[0]))) : statArr[curLvl - 1];
-  const statAtNext = statArr[nextLvl - 1];
+  const statArr = unit.stats[statKey];
+  const trueStatAtCurrent = statAtLevel(statArr, curLvl);
+  const statAtTarget = statAtLevel(statArr, tgtLvl);
+  const gainPerUpgrade = statAtTarget - trueStatAtCurrent;
 
-  const gainPerUpgrade = statAtNext - trueStatAtCurrent;
-
-  // Cost of training 1 more troop (fixed, level-independent)
+  // Cost of training 1 more troop (fixed, level-independent — trains at whatever level you're currently at)
   const trainCost = unit.cost.train;
   const trainTotal = trainCost[0] + trainCost[1] + trainCost[2] + trainCost[3];
   const costPerStat_train = trainTotal / trueStatAtCurrent;
 
-  // Cost of upgrading current -> next level
-  const upgradeCost = unit.cost.upgrade[nextLvl];
-  let upgradeTotal = null, costPerStat_upgrade = null, totalGain = null;
-  if (upgradeCost) {
-    upgradeTotal = upgradeCost[0] + upgradeCost[1] + upgradeCost[2] + upgradeCost[3];
-    totalGain = gainPerUpgrade * troopCount;
-    costPerStat_upgrade = totalGain > 0 ? upgradeTotal / totalGain : Infinity;
-  }
+  // Cumulative cost of upgrading current -> target level (sums every level in between)
+  const { total: upgradeCostArr, missingLevel } = cumulativeUpgradeCost(unit, curLvl, tgtLvl);
+  const upgradeTotal = upgradeCostArr[0] + upgradeCostArr[1] + upgradeCostArr[2] + upgradeCostArr[3];
+  const totalGain = gainPerUpgrade * troopCount;
+  const costPerStat_upgrade = totalGain > 0 ? upgradeTotal / totalGain : Infinity;
+  const upgradeAvailable = !missingLevel;
 
   document.getElementById('resultsCard').style.display = 'block';
-  document.getElementById('nextLevelLabel').textContent = nextLvl;
+  document.getElementById('nextLevelLabel').textContent = tgtLvl;
 
   document.getElementById('valTroops').textContent = `${fmtCost(costPerStat_train)} res / ${STAT_LABELS[statKey].toLowerCase()} pt`;
   document.getElementById('detailTroops').innerHTML =
     `Training cost: ${fmt(trainTotal)} (${trainCost.map(fmt).join(' / ')})<br>` +
     `Stat gained: +${fmt(trueStatAtCurrent)} ${STAT_LABELS[statKey].toLowerCase()} (1 new troop at level ${curLvl})`;
 
-  if (upgradeCost) {
+  const levelSpan = tgtLvl - curLvl;
+  if (upgradeAvailable) {
     document.getElementById('valUpgrade').textContent = `${fmtCost(costPerStat_upgrade)} res / ${STAT_LABELS[statKey].toLowerCase()} pt`;
     document.getElementById('detailUpgrade').innerHTML =
-      `Upgrade cost: ${fmt(upgradeTotal)} (${upgradeCost.map(fmt).join(' / ')})<br>` +
+      `Cumulative cost (level ${curLvl}→${tgtLvl}, ${levelSpan} level${levelSpan>1?'s':''}): ${fmt(upgradeTotal)} (${upgradeCostArr.map(fmt).join(' / ')})<br>` +
       `Stat gained: +${fmt(gainPerUpgrade)} per troop × ${troopCount} troops = +${fmt(totalGain)} total`;
   } else {
-    document.getElementById('valUpgrade').textContent = 'Max level';
-    document.getElementById('detailUpgrade').textContent = 'This unit is already at level 20 for this stat.';
+    document.getElementById('valUpgrade').textContent = 'Beyond max level';
+    document.getElementById('detailUpgrade').textContent = `This unit only has upgrade data up to level 20 (missing level ${missingLevel}).`;
   }
 
   const boxTroops = document.getElementById('boxTroops');
@@ -253,17 +279,35 @@ function calculate() {
   boxUpgrade.classList.remove('winner');
 
   const verdict = document.getElementById('verdict');
-  if (!upgradeCost) {
+  if (!upgradeAvailable) {
     boxTroops.classList.add('winner');
-    verdict.textContent = `Smithy is maxed for this stat — train more troops.`;
+    verdict.textContent = `Target level exceeds available data — train more troops.`;
   } else if (costPerStat_train < costPerStat_upgrade) {
     boxTroops.classList.add('winner');
     const pct = Math.round((costPerStat_upgrade / costPerStat_train - 1) * 100);
-    verdict.textContent = `Training more troops is ~${pct}% more resource-efficient than upgrading right now, at your current stack of ${troopCount}.`;
+    verdict.textContent = `Training more troops is ~${pct}% more resource-efficient than jumping to level ${tgtLvl}, at your current stack of ${troopCount}.`;
   } else {
     boxUpgrade.classList.add('winner');
     const pct = Math.round((costPerStat_train / costPerStat_upgrade - 1) * 100);
-    verdict.textContent = `Upgrading to level ${nextLvl} is ~${pct}% more resource-efficient than training more troops, because the boost applies to all ${troopCount} troops you already own.`;
+    verdict.textContent = `Jumping to level ${tgtLvl} is ~${pct}% more resource-efficient than training more troops, because the boost applies to all ${troopCount} troops you already own.`;
+  }
+
+  // Breakeven troop count: the stack size at which upgrade cost/stat == train cost/stat
+  // costPerStat_upgrade(N) = upgradeTotal / (gainPerUpgrade * N)  →  solve for N where this equals costPerStat_train
+  const breakevenBox = document.getElementById('breakevenBox');
+  const valBreakeven = document.getElementById('valBreakeven');
+  const detailBreakeven = document.getElementById('detailBreakeven');
+  if (!upgradeAvailable || gainPerUpgrade <= 0) {
+    breakevenBox.style.display = 'none';
+  } else {
+    breakevenBox.style.display = 'block';
+    const breakevenN = Math.ceil(upgradeTotal / (gainPerUpgrade * costPerStat_train));
+    valBreakeven.textContent = `${fmt(breakevenN)} troops`;
+    if (troopCount >= breakevenN) {
+      detailBreakeven.innerHTML = `At ${fmt(breakevenN)}+ troops, upgrading to level ${tgtLvl} beats training. You have ${troopCount} — <span style="color:var(--good)">upgrading already wins for you.</span>`;
+    } else {
+      detailBreakeven.innerHTML = `You'd need ${fmt(breakevenN)} troops (you have ${troopCount}) before upgrading to level ${tgtLvl} becomes cheaper per stat point than continuing to train.`;
+    }
   }
 
   const warnNote = document.getElementById('warnNote');
@@ -280,6 +324,7 @@ tribeSel.addEventListener('change', populateUnits);
 unitSel.addEventListener('change', populateStats);
 statSel.addEventListener('change', calculate);
 currentLevelInput.addEventListener('input', calculate);
+targetLevelInput.addEventListener('input', calculate);
 troopCountInput.addEventListener('input', calculate);
 </script>
 
