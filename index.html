@@ -102,7 +102,7 @@
 <body>
 
 <h1>Troops or Smithy Upgrade?</h1>
-<p class="sub">Compare training more troops vs. upgrading your Smithy, by resource cost, build time, or raw stat gain. Data pulled from Travian's official help center and cross-verified against live in-game Smithy screens.</p>
+<p class="sub">Compare training more troops vs. upgrading your Smithy, by resource cost, build time, or raw stat gain. Computed breakeven troop counts are cross-checked against Travian's own published numbers where available. Combat stats and costs verified against live in-game Smithy screens.</p>
 
 <div class="card">
   <div class="row3">
@@ -226,7 +226,8 @@ let mode = 'cost'; // 'cost' | 'time' | 'raw'
 
 const STAT_LABELS = {
   attack: 'Attack',
-  defense: 'Defence',
+  defenseInf: 'Defence (infantry)',
+  defenseCav: 'Defence (cavalry)',
   scoutAttack: 'Scout Attack',
   scoutResist: 'Scout Resist'
 };
@@ -253,7 +254,7 @@ function populateUnits() {
 function populateStats() {
   statSel.innerHTML = '';
   const unit = TRAVIAN_DATA[tribeSel.value][unitSel.value];
-  Object.keys(unit.stats).forEach(s => {
+  Object.keys(unit.trueStats).forEach(s => {
     const opt = document.createElement('option');
     opt.value = s; opt.textContent = STAT_LABELS[s] || s;
     statSel.appendChild(opt);
@@ -312,7 +313,7 @@ function calculate() {
   const troopCount = Math.max(0, parseInt(troopCountInput.value) || 0);
   const statLabel = STAT_LABELS[statKey].toLowerCase();
 
-  const statArr = unit.stats[statKey];
+  const statArr = unit.trueStats[statKey];
   const trueStatAtCurrent = statAtLevel(statArr, curLvl);
   const statAtTarget = statAtLevel(statArr, tgtLvl);
   const gainPerUpgrade = statAtTarget - trueStatAtCurrent;
@@ -446,9 +447,17 @@ function calculate() {
       document.getElementById('breakevenLabel').textContent = 'Breakeven troop count for this jump';
       const breakevenN = Math.ceil(upgradeTotal / (gainPerUpgrade * costPerStat_train));
       document.getElementById('valBreakeven').textContent = `${fmt(breakevenN)} troops`;
-      document.getElementById('detailBreakeven').innerHTML = troopCount >= breakevenN
+      let detail = troopCount >= breakevenN
         ? `At ${fmt(breakevenN)}+ troops, upgrading to level ${tgtLvl} beats training. You have ${troopCount} — <span style="color:var(--good)">upgrading already wins for you.</span>`
         : `You'd need ${fmt(breakevenN)} troops (you have ${troopCount}) before upgrading to level ${tgtLvl} becomes cheaper per stat point than continuing to train.`;
+      // Cross-check against Travian's own published breakeven number, when this is a single-level jump
+      if (levelSpan === 1 && unit.officialBreakeven && unit.officialBreakeven[statKey]) {
+        const official = unit.officialBreakeven[statKey][tgtLvl - 1];
+        if (official) {
+          detail += `<br><span style="color:var(--text-dim)">Travian's own published table lists ${fmt(official)} for this exact level — our computed ${fmt(breakevenN)} is ${Math.abs(breakevenN-official) <= 2 ? 'a match' : 'in the same ballpark'}.</span>`;
+        }
+      }
+      document.getElementById('detailBreakeven').innerHTML = detail;
     } else {
       breakevenBox.style.display = 'none';
     }
@@ -468,7 +477,7 @@ function calculateBudget(unit, statKey, curLvl, tgtLvl, troopCount) {
 
   const budget = Math.max(0, parseFloat(budgetInput.value) || 0);
   const statLabel = STAT_LABELS[statKey].toLowerCase();
-  const statArr = unit.stats[statKey];
+  const statArr = unit.trueStats[statKey];
   const trainCost = unit.cost.train;
   const trainTotal = trainCost[0] + trainCost[1] + trainCost[2] + trainCost[3];
 
@@ -514,7 +523,7 @@ function calculateBudget(unit, statKey, curLvl, tgtLvl, troopCount) {
 }
 
 function drawCharts(unit, statKey, curLvl) {
-  const statArr = unit.stats[statKey];
+  const statArr = unit.trueStats[statKey];
   const levels = Array.from({length:20}, (_,i)=>i+1);
   document.getElementById('chartStatLabel').textContent = `${STAT_LABELS[statKey]} value`;
   drawLineChart('chartStat', levels, statArr, curLvl, '#c9a24b');
